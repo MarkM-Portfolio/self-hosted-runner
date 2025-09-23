@@ -1,0 +1,265 @@
+name: 'Self-Hosted Runner Terminate'
+
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+          description: "AWS Region"
+          required: true
+          type: string
+      automation-acct:
+        description: "Automation Account"
+        required: true
+        type: string
+      shared-acct:
+        description: "Shared Account"
+        required: true
+        type: string
+      customer-acct:
+          description: "Customer Account"
+          required: true
+          type: string
+      customer-name:
+        description: "Customer Name"
+        required: true
+        type: string
+      runner-count:
+        description: "Number of Self-Hosted Runners to Provision"
+        required: true
+        type: number
+      runner-arch:
+        description: "Self-Hosted Runner Arch Type"
+        required: true
+        type: string
+      gh-runner:
+        description: "Github Runner Arch Type"
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ${{ inputs.aws-region }}
+  AUTOMATION_ACCT: ${{ inputs.automation-acct }}
+  SHARED_ACCT: ${{ inputs.shared-acct }}
+  CUSTOMER_ACCT: ${{ inputs.customer-acct }}
+  CUSTOMER_NAME: ${{ inputs.customer-name }}
+  REPO_ORG: "SapphireSystems"
+  REPO_NAME: "self-hosted-runner"
+  RUNNER_COUNT: ${{ inputs.runner-count }} 
+  RUNNER_ARCH: ${{ inputs.runner-arch }}
+  SKIP: false
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  self-hosted:
+    name: Scanning Self-Hosted Runners
+    runs-on:  ${{ inputs.gh-runner }}
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.2.2
+
+    - name: Setup SSH Agent
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: AWS Assume Role (${{ env.CUSTOMER_ACCT }} role/github-oidc)
+      uses: aws-actions/configure-aws-credentials@v4.1.0
+      with:
+        role-to-assume: "arn:aws:iam::${{ env.CUSTOMER_ACCT }}:role/github-oidc"
+        role-session-name: actionsrolesession
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Check Available Self-Hosted Runners
+      id: check-runners
+      run: |
+        echo "Checking online self-hosted runners..."
+
+        runners=$(curl -s -H "Authorization: Bearer ${{ secrets.GH_SECRET }}" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "https://api.github.com/orgs/${{ env.REPO_ORG }}/actions/runners")
+
+        echo "Runners information: $runners"
+
+        # Check the status of each runner and print online runners
+        online_runners=$(echo "$runners" | jq -r '.runners[] | .name' | grep ${{ env.CUSTOMER_ACCT }} || true)
+        
+        if [ -z "$online_runners" ]; then
+          echo "No available self-hosted runners found."
+        else
+          echo "Available self-hosted runners:"
+          echo "$online_runners"
+        fi
+
+        runner_count=$(echo "$online_runners" | wc -l | bc)
+        echo "Runner Count: " $runner_count
+        if [[ $runner_count -ge ${{ env.RUNNER_COUNT }} ]]; then
+          echo skip=false >> $GITHUB_OUTPUT
+        else
+          echo skip=true >> $GITHUB_OUTPUT
+        fi
+
+    - name: Self-Hosted Runners [ Found! ]
+      id: online
+      if: steps.check-runners.outputs.skip == 'false'
+      run: |
+        echo "Terminating Self-Hosted runners.."
+
+    - name: No Self-Hosted Runners found [ Nothing to destroy... ]
+      id: offline
+      if: steps.check-runners.outputs.skip == 'true'
+      run: |
+        echo "Exiiting pipeline.."
+  
+    outputs: 
+      skip: ${{ steps.check-runners.outputs.skip }}
+      
+  terraform_destroy:
+    name: 'Terraform Destroy'
+    runs-on:  ${{ inputs.gh-runner }}
+    timeout-minutes: 10
+    needs: self-hosted
+    if: needs.self-hosted.outputs.skip == 'false'
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.2.2
+
+    - name: Setup SSH Agent
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3.1.2
+      # with:
+      #   terraform_version: 1.10.03
+
+    - name: Setup Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12.4
+        cache: 'pip'
+
+    - name: Install Dependencies
+      run: |
+        pip install --upgrade pip
+        pip install boto3 botocore argparse
+
+    - name: Checkout Source Repository (${{ env.REPO_ORG }}/${{ env.REPO_NAME }})
+      uses: actions/checkout@v4.2.2
+      with:
+        repository: ${{ env.REPO_ORG }}/${{ env.REPO_NAME }}
+        path: ${{ env.REPO_NAME }}
+        ref: main
+        ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: AWS Assume Role (${{ env.CUSTOMER_ACCT }} role/github-oidc)
+      uses: aws-actions/configure-aws-credentials@v4.1.0
+      with:
+        role-to-assume: "arn:aws:iam::${{ env.CUSTOMER_ACCT }}:role/github-oidc"
+        role-session-name: actionsrolesession
+        aws-region: ${{ env.AWS_REGION }}
+      
+    - name: Generate Runner Template from ${{ env.CUSTOMER_NAME }}-${{ env.CUSTOMER_ACCT }}
+      run: |
+        python setup-env.py --arg1 "${{ env.AWS_REGION }}" --arg2 "${{ env.CUSTOMER_NAME }}" --arg3 "${{ env.CUSTOMER_ACCT }}" --arg4 "${{ env.RUNNER_COUNT }}" --arg5 "${{ env.RUNNER_ARCH }}"
+      working-directory: ${{ env.REPO_NAME }}
+      
+    - name: Terraform Init
+      id: init
+      run: |
+        terraform init \
+        -backend-config="region=${{ env.AWS_REGION }}" \
+        -backend-config="bucket=tf-self-hosted-runner--${{ env.CUSTOMER_NAME }}-${{ env.CUSTOMER_ACCT }}" \
+        -backend-config="key=self-hosted-runner.tfstate" \
+        -backend-config="dynamodb_table=self-hosted-runner-tf-state-lock--${{ env.CUSTOMER_NAME }}-${{ env.CUSTOMER_ACCT }}" \
+        -backend-config="encrypt=true" 
+      working-directory: ${{ env.REPO_NAME }}
+
+    - name: Terraform Destroy
+      id: destroy
+      run: terraform destroy -auto-approve -input=false
+      working-directory: ${{ env.REPO_NAME }}
+
+    # - name: Delete Secret
+    #   id: delete-secret
+    #   run: aws secretsmanager delete-secret --secret-id ${{ secrets.GH_SECRET_NAME }}
+      
+    - name: Removing Self-Hosted Runners
+      id: remove-runners
+      continue-on-error: true
+      run: |
+        echo "Checking available self-hosted runners..."
+
+        runners=$(curl -s -H "Authorization: Bearer ${{ secrets.GH_SECRET }}" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "https://api.github.com/orgs/${{ env.REPO_ORG }}/actions/runners")
+
+        echo "Runners information: $runners"
+
+        # Check the status of each runner and print online runners
+        online_runners=$(echo "$runners" | jq -r '.runners[] | .name' | grep ${{ env.CUSTOMER_ACCT }} || true)
+        
+        if [ -z "$online_runners" ]; then
+          echo "No online self-hosted runners found."
+        else
+          echo "Online self-hosted runners:"
+          echo "$online_runners"
+          echo "$runners" | jq -r '.runners[] | "\(.id) \(.name)"' | grep ${{ env.CUSTOMER_ACCT }} | awk '{print$1}' | while read -r RUNNER_ID; do
+            echo "Deleting runner ID: $RUNNER_ID"
+            curl -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.GH_SECRET }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/orgs/${{ env.REPO_ORG }}/actions/runners/$RUNNER_ID"
+          done
+        fi
+
+    - name: AWS Assume Role (${{ env.AUTOMATION_ACCT }} role/github-oidc)
+      uses: aws-actions/configure-aws-credentials@v4.1.0
+      with:
+        role-to-assume: "arn:aws:iam::${{ env.AUTOMATION_ACCT }}:role/github-oidc"
+        role-session-name: actionsrolesession
+        aws-region: ${{ env.AWS_REGION }}
+  
+    - name: Removing Cross Account Policies for (Automation Account-${{ env.AUTOMATION_ACCT }}) [AWSAFTExecution role]
+      run: |
+        python cross-account.py --arg1 "${{ env.CUSTOMER_ACCT }}" --arg2 "AWSAFTExecution" --arg3 remove
+      working-directory: ${{ env.REPO_NAME }}
+
+    - name: AWS Assume Role (${{ env.SHARED_ACCT }} role/github-oidc)
+      uses: aws-actions/configure-aws-credentials@v4.1.0
+      with:
+        role-to-assume: "arn:aws:iam::${{ env.SHARED_ACCT }}:role/github-oidc"
+        role-session-name: actionsrolesession
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Removing Cross Account Policies for (Shared Services-${{ env.SHARED_ACCT }}) [AWSAFTExecution role]
+      run: |
+        python cross-account.py --arg1 "${{ env.CUSTOMER_ACCT }}" --arg2 "AWSAFTExecution" --arg3 remove
+      working-directory: ${{ env.REPO_NAME }}
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4.1.0
+      with:
+        role-to-assume: "arn:aws:iam::${{ env.CUSTOMER_ACCT }}:role/github-oidc"
+        role-session-name: actionsrolesession
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Removing Cross Account for ${{ env.CUSTOMER_NAME }} [AWSAFTExecution role]
+      run: |
+        python cross-account.py --arg1 "${{ env.CUSTOMER_ACCT }}" --arg2 "AWSAFTExecution" --arg3 remove
+      working-directory: ${{ env.REPO_NAME }}
+
+    - name: Removing Cross Account for ${{ env.CUSTOMER_NAME }} [SSMInstanceProfile role]
+      run: |
+        python cross-account.py --arg1 "${{ env.CUSTOMER_ACCT }}" --arg2 "SSMInstanceProfile" --arg3 remove
+      working-directory: ${{ env.REPO_NAME }}

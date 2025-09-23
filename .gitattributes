@@ -1,0 +1,7 @@
+*.gitattributes linguist-language=Gitattributes linguist-vendored=false
+*.gitignore linguist-language=Gitignore linguist-vendored=false
+*.json linguist-language=Json linguist-vendored=false
+*.md linguist-language=Md linguist-vendored=false
+*.py linguist-language=Py linguist-vendored=false
+*.tf linguist-language=Terraform linguist-vendored=false
+*.tpl linguist-language=Tpl linguist-vendored=false
