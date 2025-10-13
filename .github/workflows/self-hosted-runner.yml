@@ -68,7 +68,7 @@ jobs:
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: AWS Assume Role (${{ env.CUSTOMER_ACCT }} role/github-oidc)
-        uses: aws-actions/configure-aws-credentials@v4.1.0
+        uses: aws-actions/configure-aws-credentials@v5.1.0
         with:
           role-to-assume: "arn:aws:iam::${{ env.CUSTOMER_ACCT }}:role/github-oidc"
           role-session-name: actionsrolesession
@@ -118,7 +118,7 @@ jobs:
         ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
     - name: AWS Assume Role (${{ env.CUSTOMER_ACCT }} role/github-oidc)
-      uses: aws-actions/configure-aws-credentials@v4.1.0
+      uses: aws-actions/configure-aws-credentials@v5.1.0
       with:
         role-to-assume: "arn:aws:iam::${{ env.CUSTOMER_ACCT }}:role/github-oidc"
         role-session-name: actionsrolesession
@@ -221,7 +221,7 @@ jobs:
         ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
         
     - name: AWS Assume Role (${{ env.AUTOMATION_ACCT }} role/github-oidc)
-      uses: aws-actions/configure-aws-credentials@v4.1.0
+      uses: aws-actions/configure-aws-credentials@v5.1.0
       with:
         role-to-assume: "arn:aws:iam::${{ env.AUTOMATION_ACCT }}:role/github-oidc"
         role-session-name: actionsrolesession
@@ -233,7 +233,7 @@ jobs:
       working-directory: ${{ env.REPO_NAME }}
 
     - name: AWS Assume Role (${{ env.SHARED_ACCT }} role/github-oidc)
-      uses: aws-actions/configure-aws-credentials@v4.1.0
+      uses: aws-actions/configure-aws-credentials@v5.1.0
       with:
         role-to-assume: "arn:aws:iam::${{ env.SHARED_ACCT }}:role/github-oidc"
         role-session-name: actionsrolesession
@@ -245,7 +245,7 @@ jobs:
       working-directory: ${{ env.REPO_NAME }}
 
     - name: AWS Assume Role (${{ env.CUSTOMER_ACCT }} role/github-oidc)
-      uses: aws-actions/configure-aws-credentials@v4.1.0
+      uses: aws-actions/configure-aws-credentials@v5.1.0
       with:
         role-to-assume: "arn:aws:iam::${{ env.CUSTOMER_ACCT }}:role/github-oidc"
         role-session-name: actionsrolesession
@@ -416,7 +416,7 @@ jobs:
         ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
     - name: AWS Assume Role (${{ env.CUSTOMER_ACCT }} role/github-oidc)
-      uses: aws-actions/configure-aws-credentials@v4.1.0
+      uses: aws-actions/configure-aws-credentials@v5.1.0
       with:
         role-to-assume: "arn:aws:iam::${{ env.CUSTOMER_ACCT }}:role/github-oidc"
         role-session-name: actionsrolesession
